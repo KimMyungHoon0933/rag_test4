@@ -20,7 +20,7 @@ from app.document_answers import (
 from app.model import (
     DEFAULT_BASE_URL, DEFAULT_DOCUMENT_MODEL, DEFAULT_MODEL, make_llm, uses_short_prompt,
 )
-from document_utils import extract_file, source_label
+from document_utils import extract_file
 
 load_dotenv()
 
@@ -131,15 +131,13 @@ JSON의 answer에는 답변을 쓰고, citations에는 근거 문서 번호(sour
 {question}
 답에 필요한 정보가 문서에 있으면 빈 답을 내지 마세요. 근거 문서 번호는 검색 문서 앞의 대괄호 속 숫자입니다."""
 )
+GENERAL_ANSWER_INSTRUCTION = "질문에 바로 답하세요. 간단한 사실을 물으면 핵심 답만 한 문장으로 쓰세요."
 CHAT_PROMPT = PromptTemplate.from_template(
-    "사용자의 질문 하나에만 한국어 1~2문장으로 자연스럽게 답하세요. "
-    "관련 없는 날짜나 새 질문을 덧붙이지 말고, 알 수 없는 개인 정보는 추측하지 마세요."
-    "\n이전 대화: {history}\n마지막 질문: {question}"
+    GENERAL_ANSWER_INSTRUCTION
+    + " 알 수 없는 개인 정보는 추측하지 마세요.\n이전 대화: {history}\n질문: {question}\n답변:"
 )
-
-
 SHORT_CHAT_PROMPT = PromptTemplate.from_template(
-    "사용자의 질문 하나에만 1~2문장으로 답하고, 새 질문이나 관련 없는 날짜를 덧붙이지 마세요 질문: {question}"
+    GENERAL_ANSWER_INSTRUCTION + "\n질문: {question}\n답변:"
 )
 
 
@@ -365,9 +363,6 @@ def main():
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if message.get("sources"):
-                with st.expander("답변 출처"):
-                    st.text(message["sources"])
 
     question = st.chat_input("질문을 입력하세요")
     if not question:
@@ -433,13 +428,8 @@ def main():
 
                 if grounded:
                     answer = grounded.answer
-                    sources = "\n\n".join(
-                        f"{source_label(citation.document.metadata)}\n{citation.quote}"
-                        for citation in grounded.citations
-                    )
                 elif document_reply_invalid:
                     answer = "문서 답변의 출처를 확인하지 못했습니다."
-                    sources = ""
                 else:
                     short_prompt = remote_url == DEFAULT_LANGSERVE_URL or (
                         not remote_url and uses_short_prompt(local_model)
@@ -447,14 +437,10 @@ def main():
                     template = SHORT_CHAT_PROMPT if short_prompt else CHAT_PROMPT
                     general_prompt = template.format(question=question, history=history)
                     answer = clean_reply((general_llm | StrOutputParser()).invoke(general_prompt))
-                    sources = ""
             if not answer:
                 answer = "답변을 생성하지 못했습니다. 질문을 조금 다르게 말해 주세요."
             st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
-            if sources:
-                with st.expander("답변 출처"):
-                    st.text(sources)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
         except Exception:
             if remote_url:
                 answer = "원격 답변 생성에 실패했습니다. LangServe 접속 URL, API 키, 서버의 Ollama 상태를 확인하세요."
