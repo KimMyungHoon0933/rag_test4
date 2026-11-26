@@ -41,7 +41,7 @@ def setting(name, default=""):
         return default
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def tokenizer():
     return tiktoken.get_encoding("cl100k_base")
 
@@ -67,7 +67,7 @@ def get_text_chunks(documents):
     ).split_documents(documents)
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_embeddings(model_name):
     from langchain_huggingface import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(
@@ -344,12 +344,11 @@ def main():
                 st.session_state.retriever = None
             if process_clicked or files_changed:
                 try:
-                    with st.spinner("텍스트 추출 및 검색 인덱스 생성 중…"):
-                        chunks = get_text_chunks(get_text(files))
-                        vectorstore = get_vectorstore(chunks)
-                        st.session_state.retriever = vectorstore.as_retriever(
-                            search_type="mmr", search_kwargs={"k": 4, "fetch_k": 20}
-                        )
+                    chunks = get_text_chunks(get_text(files))
+                    vectorstore = get_vectorstore(chunks)
+                    st.session_state.retriever = vectorstore.as_retriever(
+                        search_type="mmr", search_kwargs={"k": 4, "fetch_k": 20}
+                    )
                 except Exception as exc:
                     st.error(f"문서 처리 실패: {exc}")
             st.session_state.file_signature = signature
