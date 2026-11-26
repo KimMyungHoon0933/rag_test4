@@ -87,6 +87,22 @@ def document_reply_abstained(text: str) -> bool:
     return isinstance(answer, str) and not answer.strip() and reply.get("citations") == []
 
 
+FULL_DATE = re.compile(
+    r"(?<!\d)(\d{4})\s*(?:년|[./-])\s*(\d{1,2})\s*(?:월|[./-])\s*(\d{1,2})(?!\d)"
+)
+
+
+def date_values(text: str) -> set[tuple[int, int, int]]:
+    return {
+        (int(year), int(month), int(day))
+        for year, month, day in FULL_DATE.findall(text)
+    }
+
+
+def document_dates(documents: list[Document]) -> set[tuple[int, int, int]]:
+    return {date for document in documents for date in date_values(document.page_content)}
+
+
 def parse_grounded_reply(text: str, documents: list[Document]) -> GroundedReply | None:
     reply = decode_document_reply(text)
     if reply is None:
@@ -96,7 +112,7 @@ def parse_grounded_reply(text: str, documents: list[Document]) -> GroundedReply 
     if not isinstance(answer, str) or not isinstance(entries, list) or not 1 <= len(entries) <= 3:
         return None
     answer = clean_reply(answer)
-    if not answer:
+    if not answer or date_values(answer) - document_dates(documents):
         return None
 
     citations = []

@@ -15,7 +15,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langserve import RemoteRunnable
 
 from app.document_answers import (
-    clean_reply, document_reply_abstained, parse_grounded_reply, resolve_document_question,
+    clean_reply, document_dates, document_reply_abstained, parse_grounded_reply, resolve_document_question,
     select_document_scope,
 )
 from app.model import (
@@ -470,11 +470,14 @@ def main():
                     proposal = document_chain.invoke(document_prompt)
                     grounded = parse_grounded_reply(proposal, documents)
                     if grounded is None and not document_reply_abstained(proposal):
-                        proposal = document_chain.invoke(
-                            document_prompt + "\n인용 구절은 검색 문서에서 그대로 복사하세요."
-                        )
+                        repair = "\n인용 구절은 검색 문서에서 그대로 복사하세요."
+                        dates = sorted(document_dates(documents))
+                        if dates:
+                            source_dates = ", ".join(f"{year}년 {month}월 {day}일" for year, month, day in dates)
+                            repair += f"\n문서에서 확인된 날짜: {source_dates}. 질문에 관련된 날짜만 원문과 같게 쓰세요."
+                        proposal = document_chain.invoke(document_prompt + repair)
                         grounded = parse_grounded_reply(proposal, documents)
-                        document_reply_invalid = grounded is None and not document_reply_abstained(proposal)
+                        document_reply_invalid = grounded is None
 
                 if grounded:
                     answer = grounded.answer

@@ -114,3 +114,19 @@ class GroundedReplyTests(unittest.TestCase):
         self.assertTrue(document_reply_abstained('{"answer":"","citations":[]}'))
         self.assertFalse(document_reply_abstained('{"answer":"서울입니다.","citations":[]}'))
         self.assertFalse(document_reply_abstained("unfinished JSON"))
+
+
+    def test_answer_date_must_match_the_source_regardless_of_format(self):
+        docs = [Document(page_content="행사 날짜: 2028/06/03")]
+        for answer, valid in (
+            ("행사는 2028년 6월 3일입니다.", True),
+            ("행사는 2028-06-03입니다.", True),
+            ("행사는 1988년 6월 3일입니다.", False),
+            ("행사는 2028년 6월 13일입니다.", False),
+        ):
+            with self.subTest(answer=answer):
+                response = json.dumps({
+                    "answer": answer,
+                    "citations": [{"source": 1, "quote": "2028/06/03"}],
+                })
+                self.assertEqual(parse_grounded_reply(response, docs) is not None, valid)
