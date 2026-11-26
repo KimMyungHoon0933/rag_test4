@@ -1,0 +1,15 @@
+# Python 3.11 권장. 교재 구조에 맞춘 LangChain 0.3 계열 호환 범위입니다.
+langserve[client]==0.3.1
+langchain-core>=0.3.72,<0.4
+langchain-community>=0.3.27,<0.4
+langchain-text-splitters>=0.3.9,<0.4
+langchain-huggingface>=0.3.1,<0.4
+sentence-transformers>=3.0,<6
+transformers>=4.41,<5
+faiss-cpu>=1.8,<2
+streamlit>=1.40,<2
+tiktoken>=0.7,<1
+pypdf>=5,<7
+python-docx>=1.2,<2
+python-pptx>=1.0,<2
+python-dotenv>=1.0,<2
