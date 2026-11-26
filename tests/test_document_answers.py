@@ -4,9 +4,10 @@ import unittest
 from langchain_core.documents import Document
 
 from app.document_answers import (
-    clean_reply, concise_profile_reply, parse_grounded_reply, recover_document_reply,
-    requires_document_family_answer, resolve_document_question,
+    clean_reply, document_reply_abstained, parse_grounded_reply, resolve_document_question,
+    select_document_scope,
 )
+
 
 
 class GroundedReplyTests(unittest.TestCase):
@@ -55,15 +56,6 @@ class GroundedReplyTests(unittest.TestCase):
         self.assertEqual(clean_reply("### Response is:"), "")
 
 
-    def test_broad_introduction_can_use_a_verified_role(self):
-        document = Document(page_content="이하나는 예시대학교 컴퓨터공학과에 재학 중입니다.")
-        raw = "이하나는 예시대학교 컴퓨터공학과에 재학 중입니다."
-        current = parse_grounded_reply(json.dumps({
-            "answer": raw, "citations": [{"source": 1, "quote": raw}],
-        }), [document])
-        reply = concise_profile_reply("이하나는 누구야?", current, [document])
-        self.assertEqual(reply.answer, "이하나는 컴퓨터공학과에 재학 중입니다.")
-        self.assertEqual(reply.citations[0].quote, "컴퓨터공학과")
 
     def test_citation_tolerates_pdf_spacing_and_punctuation(self):
         result = self.parse("가족으로 부모님과 형이 있습니다.", [
@@ -82,17 +74,6 @@ class GroundedReplyTests(unittest.TestCase):
             "대한민국의 수도는?",
         )
 
-    def test_private_family_recovery_requires_the_named_source(self):
-        documents = [
-            Document(page_content="이하나", metadata={"source": "profile.pdf", "page": 1}),
-            Document(page_content="가족관계\n부모님과 형\n테스트 이메일", metadata={"source": "profile.pdf", "page": 2}),
-        ]
-        self.assertEqual(
-            recover_document_reply("이하나의 가족은 누구야?", documents).answer,
-            "문서에 따르면 가족은 부모님과 형입니다.",
-        )
-        self.assertIsNone(recover_document_reply("김하늘의 가족은 누구야?", documents))
-
 
     def test_family_name_typo_resolves_from_previous_introduction(self):
         history = [{"role": "user", "content": "박성훈에 대해서 알려줘"}]
@@ -107,11 +88,29 @@ class GroundedReplyTests(unittest.TestCase):
         source_names = ("학생_박성훈_기록.pdf",)
         question = resolve_document_question("박성후으 가족관계는?", [], source_names)
         self.assertEqual(question, "박성훈의 가족관계는?")
-        self.assertTrue(requires_document_family_answer(question, [], source_names))
 
-    def test_unresolved_family_typo_stays_in_document_path(self):
+    def test_ambiguous_name_typo_is_left_for_retrieval(self):
         question = "박성후으 가족관계는?"
         names = ("기록_박성훈.pdf", "기록_박성훌.pdf")
         self.assertEqual(resolve_document_question(question, [], names), question)
-        self.assertTrue(requires_document_family_answer(question, [], names))
-        self.assertFalse(requires_document_family_answer("일본의 수도는?", [], names))
+
+
+
+
+    def test_strips_out_prefix(self):
+        self.assertEqual(clean_reply("[OUT] 서울입니다."), "서울입니다.")
+
+
+    def test_scope_uses_all_chunks_of_the_named_source(self):
+        profile = Document(page_content="프로필 첫 페이지", metadata={"source": "학생_박성훈_프로필.pdf"})
+        family = Document(page_content="프로필 두 번째 페이지", metadata=profile.metadata)
+        school = Document(page_content="학교 안내", metadata={"source": "가상대학교 정보.pdf"})
+        documents = [school, profile, family]
+        self.assertEqual(select_document_scope("박성훈에 대해서 알려줘", documents), [profile, family])
+        self.assertEqual(select_document_scope("가상대학교가 어디야?", documents), [school])
+        self.assertEqual(select_document_scope("일본의 수도는?", documents), [])
+
+    def test_empty_reply_is_distinct_from_invalid_or_uncited_reply(self):
+        self.assertTrue(document_reply_abstained('{"answer":"","citations":[]}'))
+        self.assertFalse(document_reply_abstained('{"answer":"서울입니다.","citations":[]}'))
+        self.assertFalse(document_reply_abstained("unfinished JSON"))

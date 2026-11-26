@@ -44,7 +44,7 @@ class GroundedReply:
 
 
 REPLY_PREFIX = re.compile(
-    r"^(?:(?:\[(?:assistant|human|solut)\]|(?:답변|정답|assistant|answer)\s*[:：])\s*)+", re.I,
+    r"^(?:(?:\[(?:assistant|human|out|solut)\]\s*:?|(?:답변|정답|assistant|answer)\s*[:：])\s*)+", re.I,
 )
 
 
@@ -69,14 +69,27 @@ def matching_excerpt(quote: str, text: str) -> str | None:
     return content[start:end + 1]
 
 
-def parse_grounded_reply(text: str, documents: list[Document]) -> GroundedReply | None:
+def decode_document_reply(text: str) -> dict | None:
     if text.lstrip().startswith("\x60\x60\x60"):
         text = re.sub(r"^\s*\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60\s*$", "", text, flags=re.I)
     try:
         reply = json.loads(text)
     except (TypeError, ValueError):
         return None
-    if not isinstance(reply, dict):
+    return reply if isinstance(reply, dict) else None
+
+
+def document_reply_abstained(text: str) -> bool:
+    reply = decode_document_reply(text)
+    if reply is None:
+        return False
+    answer = reply.get("answer")
+    return isinstance(answer, str) and not answer.strip() and reply.get("citations") == []
+
+
+def parse_grounded_reply(text: str, documents: list[Document]) -> GroundedReply | None:
+    reply = decode_document_reply(text)
+    if reply is None:
         return None
 
     answer, entries = reply.get("answer"), reply.get("citations")
@@ -106,43 +119,12 @@ def parse_grounded_reply(text: str, documents: list[Document]) -> GroundedReply 
 
 
 INTRODUCTION = re.compile(r"(?<![가-힣])([가-힣]{2,5}?)[은는이가]\s+누구")
-EXTRA_PROFILE_DETAILS = re.compile(r"대학교|학사\s*과정|생년|[12]\d{3}[년./-]|남자|여자|남성|여성|@")
-ACADEMIC_DEPARTMENT = re.compile(r"(?<!\w)[가-힣A-Za-z]+?학과(?:(?!\w)|(?=(?:에서|에|의|로)\b))")
-
-
-def concise_profile_reply(
-    question: str, reply: GroundedReply | None, documents: list[Document],
-) -> GroundedReply | None:
-    """Limit a broad introduction to a verified role if the draft included extra details."""
-    subject = INTRODUCTION.search(question)
-    if not subject or (reply and not EXTRA_PROFILE_DETAILS.search(reply.answer)):
-        return reply
-
-    roles = {}
-    for document in documents:
-        text = document.page_content
-        if subject[1] not in text or "재학" not in text:
-            continue
-        for department in set(ACADEMIC_DEPARTMENT.findall(text)):
-            roles[department] = document
-
-    if len(roles) != 1:
-        return reply
-    department, document = next(iter(roles.items()))
-    name = subject[1]
-    topic = "은" if (ord(name[-1]) - ord("가")) % 28 else "는"
-    return GroundedReply(
-        f"{name}{topic} {department}에 재학 중입니다.",
-        (Citation(document, department),),
-    )
-
-
 FOLLOW_UP = re.compile(r"^(?:그\s*(?:사람|분)|해당\s*인물)(?:의)?\s*")
 IMPLIED_SUBJECT = re.compile(r"^(?:가족|소속|전공|취미|경력|연락처)(?:[은는이가을를]|\s|[?!.]|$)")
 
 
 ABOUT_PERSON = re.compile(r"^([가-힣]{2,5})에\s*대해")
-FAMILY_NAME_TYPO = re.compile(r"^([가-힣]{2,5})으(?=\s+가족)")
+NAME_SUFFIX_TYPO = re.compile(r"^([가-힣]{2,5})으(?=\s)")
 NAME_TOKEN = re.compile(r"(?<![가-힣])[가-힣]{2,5}(?![가-힣])")
 
 
@@ -153,7 +135,7 @@ def resolve_document_question(
         (message["content"] for message in reversed(messages) if message["role"] == "user"), "",
     )
     subject = INTRODUCTION.search(last_question) or ABOUT_PERSON.match(last_question)
-    typo = FAMILY_NAME_TYPO.match(question)
+    typo = NAME_SUFFIX_TYPO.match(question)
     if typo:
         entered = typo[1]
         candidates = {name for filename in source_names for name in NAME_TOKEN.findall(Path(filename).stem)}
@@ -180,45 +162,16 @@ def resolve_document_question(
     return question
 
 
-FAMILY_MEMBER_QUESTION = re.compile(
-    r"(?<![가-힣])([가-힣]{2,5}?)의?\s+가족(?:\s*(?:관계|구성원))?(?:은|는|이|가)?(?:\s|[?!.]|$)"
-)
-FAMILY_LINE = re.compile(r"(?m)^[ \t]*가족\s*관계[ \t]*[:：]?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)")
+TITLE_TOKEN = re.compile(r"[가-힣]{3,}|[a-z][a-z0-9-]{2,}")
 
 
-def requires_document_family_answer(
-    question: str, documents: list[Document], source_names: tuple[str, ...],
-) -> bool:
-    if FAMILY_NAME_TYPO.match(question):
-        return True
-    subject = FAMILY_MEMBER_QUESTION.search(question)
-    return bool(subject and (
-        any(subject[1] in NAME_TOKEN.findall(Path(name).stem) for name in source_names)
-        or any(subject[1] in document.page_content for document in documents)
-    ))
-
-
-def recover_document_reply(question: str, documents: list[Document]) -> GroundedReply | None:
-    """Recover a short cited answer only when a named person's source has an explicit field."""
-    subject = FAMILY_MEMBER_QUESTION.search(question)
-    if not subject or any(term in question for term in ("연락처", "주소", "생년", "직업", "나이")):
-        return None
-    sources = {
-        document.metadata.get("source") for document in documents
-        if subject[1] in document.page_content or subject[1] in document.metadata.get("source", "")
-    }
-    matches = {}
+def select_document_scope(question: str, documents: list[Document]) -> list[Document]:
+    """Keep sources explicitly named in the question when retrieval found them."""
+    question_words = TITLE_TOKEN.findall(question.casefold())
+    focused = []
     for document in documents:
-        if document.metadata.get("source") not in sources:
-            continue
-        field = FAMILY_LINE.search(document.page_content)
-        if not field:
-            continue
-        value = field[1].strip().rstrip(".")
-        if not value or len(value) > 80 or "@" in value or "###" in value:
-            continue
-        matches[value] = document
-    if len(matches) != 1:
-        return None
-    value, document = next(iter(matches.items()))
-    return GroundedReply(f"문서에 따르면 가족은 {value}입니다.", (Citation(document, value),))
+        file_title = Path(document.metadata.get("source", "")).stem.casefold()
+        title_words = TITLE_TOKEN.findall(file_title)
+        if any(word.startswith(title) for title in title_words for word in question_words):
+            focused.append(document)
+    return focused
