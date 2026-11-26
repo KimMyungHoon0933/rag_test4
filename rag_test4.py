@@ -1,7 +1,6 @@
 
 import hashlib
 import os
-from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -167,37 +166,6 @@ h1.rag-title {
 }
 .rag-title-accent { color: #ed2029; }
 .rag-title-icon { font-style: normal; }
-.rag-document-list {
-    display: grid;
-    gap: 0.5rem;
-    margin: 0;
-    padding: 0 0.65rem;
-    list-style: none;
-}
-.rag-document-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    color: #364152;
-    font-size: 0.875rem;
-    line-height: 1.3;
-}
-.rag-document-icon {
-    flex: none;
-    font-size: 1rem;
-}
-.rag-document-details { min-width: 0; }
-.rag-document-name {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.rag-document-size {
-    display: block;
-    color: #5b677b;
-    font-size: 0.75rem;
-}
 [data-testid="stSidebar"] {
     background-color: #edf0f5;
     color: #364152;
@@ -333,20 +301,6 @@ h1.rag-title {
 """
 
 
-def show_default_files(file_info):
-    rows = []
-    for name, size, _ in file_info:
-        safe_name = escape(name)
-        size_label = f"{size / 1024**2:.1f} MB" if size >= 1024**2 else f"{size / 1024:.1f} KB"
-        rows.append(
-            '<li class="rag-document-row"><span class="rag-document-icon" aria-hidden="true">📄</span>'
-            '<span class="rag-document-details">'
-            f'<span class="rag-document-name" title="{safe_name}">{safe_name}</span>'
-            f'<small class="rag-document-size">{size_label}</small></span></li>'
-        )
-    st.html(f'<ul class="rag-document-list" aria-label="현재 문서">{"".join(rows)}</ul>')
-
-
 def main():
     st.set_page_config(page_title="RAG_test4 Q/A Chat", page_icon="📚")
     upload_limit = st.get_option("server.maxUploadSize")
@@ -384,8 +338,6 @@ def main():
                 info = file.stat()
                 default_signature.append((file.name, info.st_size, info.st_mtime_ns))
             signature = ("default", tuple(default_signature))
-            if default_signature:
-                show_default_files(default_signature)
         files_changed = st.session_state.file_signature != signature
         process_clicked = st.button("Process", disabled=not files)
 
