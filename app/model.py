@@ -33,17 +33,14 @@ def make_llm(model: str, base_url: str, *, document_reply: bool = False):
         "client_kwargs": {"timeout": 180},
     }
     if document_reply:
-        from app.document_answers import DOCUMENT_REPLY_SCHEMA
-
-        options.update(num_predict=256, format=DOCUMENT_REPLY_SCHEMA)
+        options["num_predict"] = 256
     model_name = model.partition(":")[0].casefold()
     if model_name in {CUSTOM_Q8_NAME, LEGACY_ALPACA_NAME}:
-        reply_format = options.pop("format", None)
         llm = OllamaLLM(**options, num_ctx=4096)
         if model_name == LEGACY_ALPACA_NAME:
             return llm.bind(
-                template=ALPACA_TEMPLATE, format=reply_format,
+                template=ALPACA_TEMPLATE,
                 stop=["### Instruction:", "### Input:", "### Response:", "### Response is:", "[INST]"],
             )
-        return llm.bind(format=reply_format)
+        return llm
     return ChatOllama(**options, num_ctx=8192)
