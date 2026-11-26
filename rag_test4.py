@@ -27,6 +27,9 @@ load_dotenv()
 
 DOCUMENT_DIR = Path(__file__).resolve().parent / "document"
 DOCUMENT_TYPES = ("pdf", "docx", "pptx")
+DEFAULT_NGROK_ORIGIN = "https://48ad-14-47-249-98.ngrok-free.app"
+DEFAULT_LANGSERVE_URL = f"{DEFAULT_NGROK_ORIGIN}/llm"
+DEFAULT_RAG_DOCUMENT_URL = f"{DEFAULT_NGROK_ORIGIN}/rag"
 
 
 def setting(name, default=""):
@@ -338,7 +341,7 @@ def main():
         if key not in st.session_state:
             st.session_state[key] = value
 
-    remote_url = setting("LANGSERVE_URL").strip().rstrip("/")
+    remote_url = setting("LANGSERVE_URL", DEFAULT_LANGSERVE_URL).strip().rstrip("/")
     local_model = setting("RAG_LOCAL_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
     document_model = setting("RAG_DOCUMENT_MODEL", DEFAULT_DOCUMENT_MODEL).strip() or DEFAULT_DOCUMENT_MODEL
     with st.sidebar:
@@ -422,20 +425,23 @@ def main():
                 documents = retriever.invoke(document_question) if retriever else []
                 if documents:
                     if remote_url:
-                        default_document_url = (
-                            remote_url.removesuffix("/llm") + "/rag"
-                            if remote_url.endswith("/llm") else remote_url
-                        )
+                        if remote_url == DEFAULT_LANGSERVE_URL:
+                            default_document_url = DEFAULT_RAG_DOCUMENT_URL
+                        else:
+                            default_document_url = (
+                                remote_url.removesuffix("/llm") + "/rag"
+                                if remote_url.endswith("/llm") else remote_url
+                            )
                         document_url = setting("RAG_DOCUMENT_URL", default_document_url).strip()
                         document_llm = remote_runnable(document_url or default_document_url, headers)
                     else:
                         document_llm = make_llm(document_model, base_url, document_reply=True)
-                    chain = RAG_PROMPT | document_llm | StrOutputParser()
-                    proposal = chain.invoke({
-                        "question": document_question,
-                        "context": format_docs(documents),
-                        "history": history if document_question == question else "",
-                    })
+                    document_prompt = RAG_PROMPT.format(
+                        question=document_question,
+                        context=format_docs(documents),
+                        history=history if document_question == question else "",
+                    )
+                    proposal = (document_llm | StrOutputParser()).invoke(document_prompt)
                     grounded = concise_profile_reply(
                         question, parse_grounded_reply(proposal, documents), documents,
                     )
@@ -452,9 +458,12 @@ def main():
                     answer = "현재 문서에서 가족관계를 확인하지 못했습니다."
                     sources = ""
                 else:
-                    prompt = SHORT_CHAT_PROMPT if not remote_url and uses_short_prompt(local_model) else CHAT_PROMPT
-                    chain = prompt | general_llm | StrOutputParser()
-                    answer = clean_reply(chain.invoke({"question": question, "history": history}))
+                    short_prompt = remote_url == DEFAULT_LANGSERVE_URL or (
+                        not remote_url and uses_short_prompt(local_model)
+                    )
+                    template = SHORT_CHAT_PROMPT if short_prompt else CHAT_PROMPT
+                    general_prompt = template.format(question=question, history=history)
+                    answer = clean_reply((general_llm | StrOutputParser()).invoke(general_prompt))
                     sources = ""
             if not answer:
                 answer = "답변을 생성하지 못했습니다. 질문을 조금 다르게 말해 주세요."
